@@ -41,17 +41,14 @@ fn format_markdown(input: &str) -> String {
 
     for event in parser {
         match event {
-            Event::Start(tag) => {
-                match tag {
-                    Tag::CodeBlock { .. } => {
-                        // Indented
-                        // Fenced(CowStr<'a>)
-                        is_code = true
-                    }
-                    Tag::Paragraph { .. } => write!(code, "\n\n").unwrap(),
-                    _ => todo!("{:?}", tag),
+            Event::Start(tag) => match tag {
+                Tag::CodeBlock(_code_block_kind) => is_code = true,
+                Tag::Paragraph => {}
+                Tag::Heading(level) => {
+                    write!(out, "\n\n{:#>1$} ", "", level as usize).unwrap();
                 }
-            }
+                _ => todo!("{:?}", tag),
+            },
             Event::End(tag) => {
                 match tag {
                     Tag::CodeBlock { .. } => {
@@ -71,10 +68,12 @@ fn format_markdown(input: &str) -> String {
                             let escaped = as_24_bit_terminal_escaped(&ranges[..], true);
                             write!(out, "{}", escaped).unwrap();
                         }
-                        write!(out, "\x1b[0m").unwrap();
+                        write!(out, "\x1b[0m\n\n").unwrap();
                         code.clear();
                     }
-                    _ => {}
+                    Tag::Heading(_level) => write!(out, "\n\n").unwrap(),
+                    Tag::Paragraph => write!(code, "\n\n").unwrap(),
+                    _ => todo!("{:?}", tag),
                 }
             }
             Event::Text(text) => {
@@ -93,8 +92,6 @@ fn format_markdown(input: &str) -> String {
             Event::TaskListMarker(_) => todo!(),
         }
     }
-
-    write!(out, "\n\n").unwrap();
     out
 }
 
@@ -110,7 +107,7 @@ impl fmt::Display for FnDoc {
 
         write!(
             f,
-            "{}\n\n{}{}",
+            "{}\n\n{}{}\n\n",
             hl,
             self.signature,
             format_markdown(&self.doc)
@@ -158,9 +155,20 @@ impl<'ast> Visit<'ast> for Visitor {
 
 /// Hello, this is the main doc!
 ///
+/// ## Examples
+///
 ///     let mut x = {
 ///         1 + 1
 ///     };
+///
+/// #### A level 4 heading (example two):
+///
+///     mod two {
+///         fn foo() -> usize {
+///             1 + 1
+///         }
+///     }
+///
 fn main() -> Result<(), Box<dyn Error>> {
     let mut file = fs::File::open(
         std::env::args()
