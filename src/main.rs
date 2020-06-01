@@ -8,7 +8,7 @@ use std::io::Read;
 use proc_macro2::TokenTree;
 use pulldown_cmark::{Event, Options, Parser, Tag};
 use syn::visit::{self, Visit};
-use syn::{AttrStyle, ItemFn};
+use syn::{AttrStyle, ItemFn, Signature};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style, ThemeSet};
 use syntect::parsing::SyntaxSet;
@@ -115,9 +115,16 @@ impl fmt::Display for FnDoc {
     }
 }
 
+/// Formats a syn::Signature into a human readabable signature.
+///
+/// ## TODO: Output other parts of the sigature including return types, types, and where clauses.
+fn format_signature(sig: &Signature) -> String {
+    format!("fn {}()\n\n", &sig.ident)
+}
+
 impl<'ast> Visit<'ast> for Visitor {
     fn visit_item_fn(&mut self, node: &'ast ItemFn) {
-        let signature = format!("fn {}()\n\n", &node.sig.ident);
+        let signature = format_signature(&node.sig);
 
         // The compiler transforms doc comments, such as /// comment and /*! comment */, into
         // attributes before macros are expanded. Each comment is expanded into an attribute of the
