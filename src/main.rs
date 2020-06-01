@@ -8,7 +8,7 @@ use std::io::Read;
 use proc_macro2::TokenTree;
 use pulldown_cmark::{Event, Options, Parser, Tag};
 use syn::visit::{self, Visit};
-use syn::{AttrStyle, ItemFn, Signature};
+use syn::{AttrStyle, Attribute, ItemFn, ItemMod, Signature};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style, ThemeSet};
 use syntect::parsing::SyntaxSet;
@@ -21,12 +21,14 @@ struct Visitor {
 #[derive(Debug)]
 enum Doc {
     FnDoc(FnDoc),
+    ModDoc(ModDoc),
 }
 
 impl fmt::Display for Doc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Doc::FnDoc(fn_doc) => write!(f, "{}", fn_doc),
+            Doc::ModDoc(mod_doc) => write!(f, "{}", mod_doc),
         }
     }
 }
@@ -115,6 +117,19 @@ impl fmt::Display for FnDoc {
     }
 }
 
+#[derive(Debug)]
+struct ModDoc {
+    ident: String,
+    doc: String,
+}
+
+impl fmt::Display for ModDoc {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let hl = format!("{:-^1$}", format!("module {}", self.ident), 80);
+        write!(f, "{}\n\n{}\n\n", hl, format_markdown(&self.doc))
+    }
+}
+
 /// Formats a syn::Signature into a human readabable signature.
 ///
 /// ## TODO: Output other parts of the sigature including return types, types, and where clauses.
@@ -122,42 +137,82 @@ fn format_signature(sig: &Signature) -> String {
     format!("fn {}()\n\n", &sig.ident)
 }
 
-impl<'ast> Visit<'ast> for Visitor {
-    fn visit_item_fn(&mut self, node: &'ast ItemFn) {
-        let signature = format_signature(&node.sig);
+fn format_doc(attrs: &[Attribute]) -> String {
+    // The compiler transforms doc comments, such as /// comment and /*! comment */, into
+    // attributes before macros are expanded. Each comment is expanded into an attribute of the
+    // form #[doc = r"comment"].
+    //
+    // Outer doc comments like /// Example.
+    // Inner doc comments like //! Example.
 
-        // The compiler transforms doc comments, such as /// comment and /*! comment */, into
-        // attributes before macros are expanded. Each comment is expanded into an attribute of the
-        // form #[doc = r"comment"].
-        //
-        // Outer doc comments like /// Example.
-        // Inner doc comments like //! Example.
-
-        let mut doc = String::new();
-        for attr in &node.attrs {
-            if attr.style == AttrStyle::Outer {
-                for token in attr.tokens.clone().into_iter() {
-                    match token {
-                        TokenTree::Literal(lit) => {
-                            let mut lit = lit.to_string();
-                            lit.remove(0); // remove the first `"`
-                            lit.remove(0); // assume there is a leading space (TODO: Fix this assumption)
-                            if !lit.is_empty() {
-                                lit.remove(lit.len() - 1); // remove the last `"`
-                            }
-                            write!(doc, "{}\n", lit).unwrap();
+    let mut doc = String::new();
+    for attr in attrs {
+        if attr.style == AttrStyle::Outer {
+            for token in attr.tokens.clone().into_iter() {
+                match token {
+                    TokenTree::Literal(lit) => {
+                        let mut lit = lit.to_string();
+                        lit.remove(0); // remove the first `"`
+                        lit.remove(0); // assume there is a leading space (TODO: Fix this assumption)
+                        if !lit.is_empty() {
+                            lit.remove(lit.len() - 1); // remove the last `"`
                         }
-                        _ => (),
+                        write!(doc, "{}\n", lit).unwrap();
                     }
+                    _ => (),
                 }
             }
         }
+    }
+    doc
+}
+
+impl<'ast> Visit<'ast> for Visitor {
+    fn visit_item_fn(&mut self, node: &'ast ItemFn) {
+        let signature = format_signature(&node.sig);
+        let doc = format_doc(&node.attrs);
 
         self.docs.push(Doc::FnDoc(FnDoc { signature, doc }));
 
         // Delegate to the default impl to visit any nested functions.
         visit::visit_item_fn(self, node);
     }
+
+    fn visit_item_mod(&mut self, node: &'ast ItemMod) {
+        let ident = format!("{}", &node.ident);
+        let doc = format_doc(&node.attrs);
+        self.docs.push(Doc::ModDoc(ModDoc { ident, doc }));
+
+        visit::visit_item_mod(self, node);
+    }
+}
+
+/// This is just a test module to use for formatting!
+mod foo {
+    #[allow(dead_code)]
+
+    /// BAR is the answer to the universe and everything.
+    ///
+    /// ## Examples
+    ///
+    /// Fenced block example:
+    ///
+    /// ```should_panic
+    /// fn find_answer() -> usize {
+    ///     todo!();
+    ///     BAR
+    /// }
+    /// ```
+    ///
+    /// The answer:
+    ///
+    /// ```ignore
+    /// const THE_ANSWER: usize = BAR;
+    /// ```
+    const BAR: usize = 42;
+
+    /// Foo
+    fn foo() {}
 }
 
 /// Hello, this is the main doc!
